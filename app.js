@@ -40,6 +40,7 @@ const els = {
   loginBtn: document.querySelector("#loginBtn"),
   logoutBtn: document.querySelector("#logoutBtn"),
   configWarning: document.querySelector("#configWarning"),
+  authNotice: document.querySelector("#authNotice"),
   tabs: document.querySelectorAll(".tab"),
   views: document.querySelectorAll(".view"),
   adminOnly: document.querySelectorAll(".admin-only"),
@@ -95,8 +96,10 @@ function boot() {
   state.appReady = true;
 
   wireStaticHandlers();
-  getRedirectResult(auth).catch((error) => showToast(error.message, "error"));
-  onAuthStateChanged(auth, handleAuthChange);
+  getRedirectResult(auth).catch((error) => showAuthError(error));
+  onAuthStateChanged(auth, (user) => {
+    handleAuthChange(user).catch((error) => showAuthError(error));
+  });
 }
 
 function wireStaticHandlers() {
@@ -124,20 +127,29 @@ async function signIn() {
   }
 
   const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
   try {
     await signInWithPopup(auth, provider);
   } catch (error) {
-    if (["auth/popup-blocked", "auth/cancelled-popup-request"].includes(error.code)) {
+    if (error.code === "auth/popup-closed-by-user") {
+      showAuthMessage("The Google sign-in window closed before Firebase completed login. Try again and wait for this page to update.");
+      return;
+    }
+
+    if (shouldUseRedirectFallback(error)) {
+      showAuthMessage("Popup sign-in did not complete. Switching to full-page Google sign-in...");
       await signInWithRedirect(auth, provider);
       return;
     }
-    showToast(error.message, "error");
+
+    showAuthError(error);
   }
 }
 
 async function handleAuthChange(user) {
   state.user = user;
   state.userRole = "guest";
+  hideAuthMessage();
 
   if (!user) {
     els.authStatus.textContent = "Not signed in";
@@ -148,25 +160,49 @@ async function handleAuthChange(user) {
     return;
   }
 
+  els.authStatus.textContent = `${user.displayName || user.email} · checking access`;
+  els.loginBtn.classList.add("hidden");
+  els.logoutBtn.classList.remove("hidden");
+
   const normalizedEmail = user.email.toLowerCase();
   const bootstrapAdmin = bootstrapAdminEmails.map((email) => email.toLowerCase()).includes(normalizedEmail);
   const userRef = doc(db, "users", user.uid);
-  const userSnap = await getDoc(userRef);
-  const existingRole = userSnap.exists() ? userSnap.data().role : null;
+  let userSnap = null;
+  let existingRole = null;
+
+  try {
+    userSnap = await getDoc(userRef);
+    existingRole = userSnap.exists() ? userSnap.data().role : null;
+  } catch (error) {
+    console.warn("Could not read user role from Firestore.", error);
+    if (!bootstrapAdmin) {
+      state.userRole = "user";
+      els.authStatus.textContent = `${user.displayName || user.email} · signed in`;
+      setAdminVisible(false);
+      showAuthMessage("You are signed in, but Firestore rules are blocking role lookup. Publish firestore.rules, then refresh.");
+      return;
+    }
+  }
+
   const role = existingRole || (bootstrapAdmin ? "admin" : "user");
 
-  await setDoc(
-    userRef,
-    {
-      email: user.email,
-      displayName: user.displayName || "",
-      photoURL: user.photoURL || "",
-      role,
-      updatedAt: serverTimestamp(),
-      createdAt: userSnap.exists() ? userSnap.data().createdAt : serverTimestamp(),
-    },
-    { merge: true },
-  );
+  try {
+    await setDoc(
+      userRef,
+      {
+        email: user.email,
+        displayName: user.displayName || "",
+        photoURL: user.photoURL || "",
+        role,
+        updatedAt: serverTimestamp(),
+        createdAt: userSnap?.exists() ? userSnap.data().createdAt : serverTimestamp(),
+      },
+      { merge: true },
+    );
+  } catch (error) {
+    console.warn("Could not save user profile to Firestore.", error);
+    showAuthMessage("You are signed in, but Firestore rejected the profile save. Publish firestore.rules and make sure your email is listed as a bootstrap admin.");
+  }
 
   state.userRole = role;
   els.authStatus.textContent = `${user.displayName || user.email} · ${role}`;
@@ -175,8 +211,34 @@ async function handleAuthChange(user) {
   setAdminVisible(role === "admin");
 
   if (role === "admin") {
-    await Promise.all([loadEvents(), loadRecentStudents()]);
+    await Promise.allSettled([loadEvents(), loadRecentStudents()]);
   }
+}
+
+function shouldUseRedirectFallback(error) {
+  return [
+    "auth/popup-blocked",
+    "auth/cancelled-popup-request",
+    "auth/operation-not-supported-in-this-environment",
+    "auth/web-storage-unsupported",
+  ].includes(error.code);
+}
+
+function showAuthError(error) {
+  console.error("Authentication error", error);
+  const code = error?.code ? `${error.code}: ` : "";
+  showAuthMessage(`${code}${error?.message || "Google sign-in failed."}`);
+  showToast("Google sign-in needs attention.", "error");
+}
+
+function showAuthMessage(message) {
+  els.authNotice.textContent = message;
+  els.authNotice.classList.remove("hidden");
+}
+
+function hideAuthMessage() {
+  els.authNotice.textContent = "";
+  els.authNotice.classList.add("hidden");
 }
 
 function setAdminVisible(isAdmin) {
