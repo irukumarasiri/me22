@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrapAdmin() {
+      return signedIn()
+        && request.auth.token.email in [
+          "wmgiruk@gmail.com",
+          "jinethbinulaka@gmail.com",
+          "randinu2@gmail.com"
+        ];
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    function ownProfile(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+      allow read: if ownProfile(uid) || isAdmin();
+      allow create: if ownProfile(uid)
+        && (
+          request.resource.data.role == "user"
+          || (request.resource.data.role == "admin" && isBootstrapAdmin())
+        );
+      allow update: if isAdmin()
+        || (
+          ownProfile(uid)
+          && request.resource.data.role == resource.data.role
+        );
+    }
+
+    match /students/{indexNumber} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /events/{eventId} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      match /attendance/{indexNumber} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+    }
+  }
+}

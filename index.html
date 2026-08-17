@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Attendance Checker</title>
+    <meta
+      name="description"
+      content="Mobile-first attendance tracker for university events using Firebase and Google sign-in."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <noscript>This app needs JavaScript enabled to work.</noscript>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">University event attendance</p>
+          <h1>Attendance Checker</h1>
+        </div>
+        <div class="auth-box">
+          <span id="authStatus" class="auth-status">Checking sign-in...</span>
+          <button id="loginBtn" class="btn primary" type="button">Sign in with Google</button>
+          <button id="logoutBtn" class="btn ghost hidden" type="button">Sign out</button>
+        </div>
+      </header>
+
+      <main>
+        <section id="configWarning" class="notice warning hidden">
+          Firebase is not configured yet. Open <strong>firebase-config.js</strong>, paste your Firebase web app
+          settings, then refresh this page.
+        </section>
+
+        <nav class="tabs" aria-label="Main sections">
+          <button class="tab active" type="button" data-view="searchView">Search</button>
+          <button class="tab admin-only hidden" type="button" data-view="eventsView">Events</button>
+          <button class="tab admin-only hidden" type="button" data-view="importView">Import</button>
+          <button class="tab admin-only hidden" type="button" data-view="studentsView">Students</button>
+        </nav>
+
+        <section id="searchView" class="view active">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Public lookup</p>
+              <h2>Check a student’s attendance</h2>
+            </div>
+          </div>
+
+          <form id="searchForm" class="panel form-grid">
+            <label>
+              Index number
+              <input id="searchIndex" inputmode="text" autocomplete="off" placeholder="220062D" />
+            </label>
+            <button class="btn primary" type="submit">Search</button>
+          </form>
+
+          <div id="searchResults" class="results-stack" aria-live="polite"></div>
+        </section>
+
+        <section id="eventsView" class="view">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Admin workspace</p>
+              <h2>Create and mark events</h2>
+            </div>
+          </div>
+
+          <form id="eventForm" class="panel">
+            <div class="form-grid two">
+              <label>
+                Event title
+                <input id="eventTitle" required placeholder="Decoration planning" />
+              </label>
+              <label>
+                Event date
+                <input id="eventDate" type="date" required />
+              </label>
+            </div>
+            <label>
+              Description
+              <textarea id="eventDescription" rows="3" placeholder="Short note about the work or location"></textarea>
+            </label>
+            <button class="btn primary" type="submit">Create event</button>
+          </form>
+
+          <div class="work-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Events</h3>
+                <button id="refreshEventsBtn" class="btn small" type="button">Refresh</button>
+              </div>
+              <div id="eventsList" class="item-list" aria-live="polite"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3 id="activeEventTitle">Select an event</h3>
+                  <p id="activeEventMeta" class="muted">Attendance tools appear here.</p>
+                </div>
+              </div>
+
+              <div id="attendanceTools" class="hidden">
+                <div class="batch-tabs" role="group" aria-label="Batch selection">
+                  <button class="batch-chip active" type="button" data-batch="22">22</button>
+                  <button class="batch-chip" type="button" data-batch="23">23</button>
+                  <button class="batch-chip" type="button" data-batch="24">24</button>
+                  <button class="batch-chip" type="button" data-batch="25">25</button>
+                  <button class="batch-chip" type="button" data-batch="other">Other</button>
+                </div>
+
+                <form id="attendanceForm" class="mark-form">
+                  <label id="attendanceInputLabel">
+                    Index suffix
+                    <div class="prefix-input">
+                      <span id="indexPrefix">22</span>
+                      <input
+                        id="attendanceIndex"
+                        inputmode="text"
+                        autocomplete="off"
+                        placeholder="0062D"
+                        required
+                      />
+                    </div>
+                  </label>
+                  <button class="btn primary" type="submit">Mark present</button>
+                </form>
+
+                <div id="markFeedback" class="inline-feedback" aria-live="polite"></div>
+
+                <div class="panel-head compact">
+                  <h3>Present students</h3>
+                  <span id="attendanceCount" class="count-pill">0</span>
+                </div>
+                <div id="attendanceList" class="item-list attendance-list"></div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="importView" class="view">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Student records</p>
+              <h2>Import Excel student lists</h2>
+            </div>
+          </div>
+
+          <form id="importForm" class="panel">
+            <div class="form-grid two">
+              <label>
+                Batch
+                <select id="importBatch">
+                  <option value="22">22 batch</option>
+                  <option value="23">23 batch</option>
+                  <option value="24">24 batch</option>
+                  <option value="25">25 batch</option>
+                </select>
+              </label>
+              <label>
+                Excel file
+                <input id="studentFile" type="file" accept=".xlsx,.xls,.csv" required />
+              </label>
+            </div>
+            <p class="helper">
+              Supports your current format: column A is name, column B is index number, without a header row.
+            </p>
+            <button class="btn primary" type="submit">Import students</button>
+          </form>
+
+          <div id="importResults" class="results-stack" aria-live="polite"></div>
+        </section>
+
+        <section id="studentsView" class="view">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Custom helpers</p>
+              <h2>Add people outside the four batches</h2>
+            </div>
+          </div>
+
+          <form id="customStudentForm" class="panel">
+            <div class="form-grid two">
+              <label>
+                Name
+                <input id="customName" required placeholder="Helper name" />
+              </label>
+              <label>
+                Custom ID
+                <input id="customIndex" required autocomplete="off" placeholder="VOLUNTEER01" />
+              </label>
+            </div>
+            <button class="btn primary" type="submit">Add custom person</button>
+          </form>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Recent student records</h3>
+              <button id="refreshStudentsBtn" class="btn small" type="button">Refresh</button>
+            </div>
+            <div id="studentsList" class="item-list"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  </body>
+</html>
