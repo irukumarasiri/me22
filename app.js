@@ -771,7 +771,8 @@ async function searchAttendance(event) {
 function normalizeIndex(value) {
   return String(value || "")
     .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 32);
 }
 
 function formatDate(value) {

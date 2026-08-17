@@ -73,7 +73,7 @@
           <form id="searchForm" class="panel form-grid">
             <label>
               Index number
-              <input id="searchIndex" inputmode="text" autocomplete="off" placeholder="220062D" />
+              <input id="searchIndex" inputmode="text" autocomplete="off" maxlength="32" placeholder="220062D" />
             </label>
             <button class="btn primary" type="submit">Search</button>
           </form>
@@ -93,7 +93,7 @@
             <div class="form-grid two">
               <label>
                 Event title
-                <input id="eventTitle" required placeholder="Decoration planning" />
+                <input id="eventTitle" required maxlength="120" placeholder="Decoration planning" />
               </label>
               <label>
                 Event date
@@ -102,7 +102,12 @@
             </div>
             <label>
               Description
-              <textarea id="eventDescription" rows="3" placeholder="Short note about the work or location"></textarea>
+              <textarea
+                id="eventDescription"
+                rows="3"
+                maxlength="500"
+                placeholder="Short note about the work or location"
+              ></textarea>
             </label>
             <button class="btn primary" type="submit">Create event</button>
           </form>
@@ -142,6 +147,7 @@
                         id="attendanceIndex"
                         inputmode="text"
                         autocomplete="off"
+                        maxlength="32"
                         placeholder="0062D"
                         required
                       />
@@ -207,11 +213,11 @@
             <div class="form-grid two">
               <label>
                 Name
-                <input id="customName" required placeholder="Helper name" />
+                <input id="customName" required maxlength="160" placeholder="Helper name" />
               </label>
               <label>
                 Custom ID
-                <input id="customIndex" required autocomplete="off" placeholder="VOLUNTEER01" />
+                <input id="customIndex" required autocomplete="off" maxlength="32" placeholder="VOLUNTEER01" />
               </label>
             </div>
             <button class="btn primary" type="submit">Add custom person</button>
