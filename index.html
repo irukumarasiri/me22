@@ -45,7 +45,27 @@
         <section id="searchView" class="view active">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Public lookup</p>
+              <p class="eyebrow">Public activity</p>
+              <h2>Recent event attendance</h2>
+            </div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Latest events</h3>
+                <p class="muted">Read-only overview for everyone.</p>
+              </div>
+              <button id="refreshPublicEventsBtn" class="btn small" type="button">Refresh</button>
+            </div>
+            <div id="publicEventsList" class="public-events-grid" aria-live="polite">
+              <p class="empty">Loading recent events...</p>
+            </div>
+          </section>
+
+          <div class="section-head compact-title">
+            <div>
+              <p class="eyebrow">Personal lookup</p>
               <h2>Check a student’s attendance</h2>
             </div>
           </div>

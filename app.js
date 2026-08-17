@@ -11,7 +11,6 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
   collection,
-  collectionGroup,
   deleteDoc,
   doc,
   getDoc,
@@ -22,7 +21,6 @@ import {
   query,
   serverTimestamp,
   setDoc,
-  where,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 const REQUIRED_BATCHES = ["22", "23", "24", "25"];
@@ -44,6 +42,8 @@ const els = {
   tabs: document.querySelectorAll(".tab"),
   views: document.querySelectorAll(".view"),
   adminOnly: document.querySelectorAll(".admin-only"),
+  refreshPublicEventsBtn: document.querySelector("#refreshPublicEventsBtn"),
+  publicEventsList: document.querySelector("#publicEventsList"),
   searchForm: document.querySelector("#searchForm"),
   searchIndex: document.querySelector("#searchIndex"),
   searchResults: document.querySelector("#searchResults"),
@@ -96,6 +96,10 @@ function boot() {
   state.appReady = true;
 
   wireStaticHandlers();
+  loadPublicRecentEvents().catch((error) => {
+    console.warn("Could not load public recent events.", error);
+    renderPublicEventsError("Recent events could not be loaded. Check Firestore rules if this continues.");
+  });
   getRedirectResult(auth).catch((error) => showAuthError(error));
   onAuthStateChanged(auth, (user) => {
     handleAuthChange(user).catch((error) => showAuthError(error));
@@ -106,6 +110,12 @@ function wireStaticHandlers() {
   els.tabs.forEach((tab) => tab.addEventListener("click", () => showView(tab.dataset.view)));
   els.loginBtn.addEventListener("click", signIn);
   els.logoutBtn.addEventListener("click", () => signOut(auth));
+  els.refreshPublicEventsBtn.addEventListener("click", () => {
+    loadPublicRecentEvents().catch((error) => {
+      console.warn("Could not refresh public recent events.", error);
+      renderPublicEventsError("Recent events could not be refreshed.");
+    });
+  });
   els.searchForm.addEventListener("submit", searchAttendance);
   els.eventForm.addEventListener("submit", createEvent);
   els.refreshEventsBtn.addEventListener("click", loadEvents);
@@ -321,6 +331,7 @@ async function createEvent(event) {
   els.eventDate.value = new Date().toISOString().slice(0, 10);
   showToast("Event created.");
   await loadEvents();
+  await loadPublicRecentEvents();
   selectEvent(eventId);
 }
 
@@ -408,6 +419,7 @@ async function markAttendance(event) {
   els.attendanceIndex.value = "";
   setMarkFeedback(`${student.name} marked present.`, "success");
   await loadAttendance();
+  await loadPublicRecentEvents();
 }
 
 async function loadAttendance() {
@@ -443,8 +455,103 @@ async function loadAttendance() {
       await deleteDoc(doc(db, "events", state.activeEventId, "attendance", button.dataset.remove));
       showToast("Attendance entry removed.");
       await loadAttendance();
+      await loadPublicRecentEvents();
     });
   });
+}
+
+async function loadPublicRecentEvents() {
+  if (!state.appReady) {
+    renderPublicEventsError("Firebase is not configured yet.");
+    return;
+  }
+
+  els.publicEventsList.innerHTML = `<p class="empty">Loading recent events...</p>`;
+  const eventsQuery = query(collection(db, "events"), orderBy("eventDate", "desc"), limit(6));
+  const snap = await getDocs(eventsQuery);
+  const events = snap.docs.map((eventDoc) => ({ id: eventDoc.id, ...eventDoc.data() }));
+
+  if (!events.length) {
+    els.publicEventsList.innerHTML = `<p class="empty">No events have been published yet.</p>`;
+    return;
+  }
+
+  const eventCards = await Promise.all(
+    events.map(async (item) => {
+      const attendanceSnap = await getDocs(collection(db, "events", item.id, "attendance"));
+      return {
+        ...item,
+        attendanceCount: attendanceSnap.size,
+      };
+    }),
+  );
+
+  els.publicEventsList.innerHTML = eventCards
+    .map(
+      (item) => `
+        <article class="public-event-card">
+          <div class="stat-row">
+            <span>
+              <strong>${escapeHtml(item.title)}</strong>
+              <small>${escapeHtml(formatDate(item.eventDate))}</small>
+            </span>
+            <span class="big-count">${item.attendanceCount}</span>
+          </div>
+          ${item.description ? `<p class="event-description">${escapeHtml(item.description)}</p>` : ""}
+          <button class="btn small" type="button" data-public-attendees="${escapeHtml(item.id)}">
+            View attendees
+          </button>
+          <div class="public-attendees hidden" id="public-attendees-${escapeHtml(item.id)}"></div>
+        </article>
+      `,
+    )
+    .join("");
+
+  els.publicEventsList.querySelectorAll("[data-public-attendees]").forEach((button) => {
+    button.addEventListener("click", () => togglePublicAttendees(button.dataset.publicAttendees, button));
+  });
+}
+
+async function togglePublicAttendees(eventId, button) {
+  const container = document.querySelector(`#public-attendees-${CSS.escape(eventId)}`);
+  if (!container) return;
+
+  if (!container.classList.contains("hidden")) {
+    container.classList.add("hidden");
+    button.textContent = "View attendees";
+    return;
+  }
+
+  button.textContent = "Hide attendees";
+  container.classList.remove("hidden");
+  container.innerHTML = `<p class="empty">Loading attendees...</p>`;
+
+  try {
+    const snap = await getDocs(collection(db, "events", eventId, "attendance"));
+    const rows = snap.docs
+      .map((attendanceDoc) => attendanceDoc.data())
+      .sort((a, b) => String(a.indexNumber).localeCompare(String(b.indexNumber)));
+
+    container.innerHTML = rows.length
+      ? `<div class="compact-attendee-list">${rows
+          .map(
+            (row) => `
+              <div class="attendee-pill">
+                <strong>${escapeHtml(row.indexNumber)}</strong>
+                <span>${escapeHtml(row.studentName || "Unknown")}</span>
+              </div>
+            `,
+          )
+          .join("")}</div>`
+      : `<p class="empty">No attendees have been marked for this event yet.</p>`;
+  } catch (error) {
+    console.warn("Could not load public attendees.", error);
+    container.innerHTML = `<p class="empty">Attendees could not be loaded.</p>`;
+  }
+}
+
+function renderPublicEventsError(message) {
+  els.publicEventsList.innerHTML = `<div class="notice warning">${escapeHtml(message)}</div>`;
 }
 
 async function importStudents(event) {
@@ -599,49 +706,66 @@ async function searchAttendance(event) {
   }
 
   els.searchResults.innerHTML = `<div class="notice">Searching...</div>`;
-  const studentSnap = await getDoc(doc(db, "students", indexNumber));
-  const attendanceSnap = await getDocs(query(collectionGroup(db, "attendance"), where("indexNumber", "==", indexNumber)));
-  const attendances = attendanceSnap.docs.map((attendanceDoc) => ({
-    id: attendanceDoc.id,
-    eventId: attendanceDoc.ref.parent.parent.id,
-    ...attendanceDoc.data(),
-  }));
-  const events = await Promise.all(attendances.map((item) => getDoc(doc(db, "events", item.eventId))));
+  try {
+    const [studentSnap, eventsSnap] = await Promise.all([
+      getDoc(doc(db, "students", indexNumber)),
+      getDocs(query(collection(db, "events"), orderBy("eventDate", "desc"), limit(80))),
+    ]);
 
-  const eventRows = events
-    .filter((eventSnap) => eventSnap.exists())
-    .map((eventSnap) => ({ id: eventSnap.id, ...eventSnap.data() }))
-    .sort((a, b) => String(b.eventDate).localeCompare(String(a.eventDate)));
+    const eventChecks = await Promise.all(
+      eventsSnap.docs.map(async (eventDoc) => {
+        const attendanceSnap = await getDoc(doc(db, "events", eventDoc.id, "attendance", indexNumber));
+        return attendanceSnap.exists()
+          ? {
+              id: eventDoc.id,
+              attendance: attendanceSnap.data(),
+              ...eventDoc.data(),
+            }
+          : null;
+      }),
+    );
 
-  const student = studentSnap.exists() ? studentSnap.data() : null;
-  els.searchResults.innerHTML = `
-    <section class="panel result-card">
-      <div class="stat-row">
-        <span>
-          <strong>${escapeHtml(indexNumber)}</strong>
-          <small>${escapeHtml(student?.name || "No student record found")}</small>
-        </span>
-        <span class="big-count">${eventRows.length}</span>
+    const eventRows = eventChecks
+      .filter(Boolean)
+      .sort((a, b) => String(b.eventDate).localeCompare(String(a.eventDate)));
+
+    const student = studentSnap.exists() ? studentSnap.data() : eventRows[0]?.attendance || null;
+    els.searchResults.innerHTML = `
+      <section class="panel result-card">
+        <div class="stat-row">
+          <span>
+            <strong>${escapeHtml(indexNumber)}</strong>
+            <small>${escapeHtml(student?.name || student?.studentName || "No student record found")}</small>
+          </span>
+          <span class="big-count">${eventRows.length}</span>
+        </div>
+        <p class="muted">${eventRows.length === 1 ? "event attended" : "events attended"}</p>
+        ${
+          eventRows.length
+            ? `<div class="item-list">${eventRows
+                .map(
+                  (item) => `
+                    <div class="list-row">
+                      <span>
+                        <strong>${escapeHtml(item.title)}</strong>
+                        <small>${escapeHtml(formatDate(item.eventDate))}</small>
+                      </span>
+                    </div>
+                  `,
+                )
+                .join("")}</div>`
+            : `<p class="empty">No attendance has been marked for this index yet.</p>`
+        }
+      </section>
+    `;
+  } catch (error) {
+    console.warn("Attendance search failed.", error);
+    els.searchResults.innerHTML = `
+      <div class="notice warning">
+        Search could not be completed. Check Firestore read rules and try again.
       </div>
-      <p class="muted">${eventRows.length === 1 ? "event attended" : "events attended"}</p>
-      ${
-        eventRows.length
-          ? `<div class="item-list">${eventRows
-              .map(
-                (item) => `
-                  <div class="list-row">
-                    <span>
-                      <strong>${escapeHtml(item.title)}</strong>
-                      <small>${escapeHtml(formatDate(item.eventDate))}</small>
-                    </span>
-                  </div>
-                `,
-              )
-              .join("")}</div>`
-          : `<p class="empty">No attendance has been marked for this index yet.</p>`
-      }
-    </section>
-  `;
+    `;
+  }
 }
 
 function normalizeIndex(value) {
