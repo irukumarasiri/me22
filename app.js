@@ -169,25 +169,45 @@ async function handleAuthChange(user) {
   const userRef = doc(db, "users", user.uid);
   let userSnap = null;
   let existingRole = null;
+  let role = bootstrapAdmin ? "admin" : "user";
+
+  if (bootstrapAdmin) {
+    applySignedInRole(user, role);
+    showAuthMessage("Admin access granted from the local bootstrap admin list. Firestore profile sync is running in the background.");
+    syncUserProfile(userRef, user, role, userSnap).catch((error) => {
+      console.warn("Could not save bootstrap admin profile to Firestore.", error);
+      showAuthMessage("Admin access is active locally, but Firestore rejected profile sync. Publish firestore.rules before importing or saving attendance.");
+    });
+    return;
+  }
 
   try {
-    userSnap = await getDoc(userRef);
+    userSnap = await withTimeout(getDoc(userRef), 8000, "Role lookup timed out.");
     existingRole = userSnap.exists() ? userSnap.data().role : null;
   } catch (error) {
     console.warn("Could not read user role from Firestore.", error);
-    if (!bootstrapAdmin) {
-      state.userRole = "user";
-      els.authStatus.textContent = `${user.displayName || user.email} · signed in`;
-      setAdminVisible(false);
-      showAuthMessage("You are signed in, but Firestore rules are blocking role lookup. Publish firestore.rules, then refresh.");
-      return;
-    }
+    state.userRole = "user";
+    els.authStatus.textContent = `${user.displayName || user.email} · signed in`;
+    setAdminVisible(false);
+    showAuthMessage("You are signed in, but Firestore rules are blocking role lookup. Publish firestore.rules, then refresh.");
+    return;
   }
 
-  const role = existingRole || (bootstrapAdmin ? "admin" : "user");
+  role = existingRole || "user";
 
   try {
-    await setDoc(
+    await syncUserProfile(userRef, user, role, userSnap);
+  } catch (error) {
+    console.warn("Could not save user profile to Firestore.", error);
+    showAuthMessage("You are signed in, but Firestore rejected the profile save. Publish firestore.rules and make sure your email is listed as a bootstrap admin.");
+  }
+
+  applySignedInRole(user, role);
+}
+
+async function syncUserProfile(userRef, user, role, userSnap) {
+  await withTimeout(
+    setDoc(
       userRef,
       {
         email: user.email,
@@ -198,12 +218,13 @@ async function handleAuthChange(user) {
         createdAt: userSnap?.exists() ? userSnap.data().createdAt : serverTimestamp(),
       },
       { merge: true },
-    );
-  } catch (error) {
-    console.warn("Could not save user profile to Firestore.", error);
-    showAuthMessage("You are signed in, but Firestore rejected the profile save. Publish firestore.rules and make sure your email is listed as a bootstrap admin.");
-  }
+    ),
+    8000,
+    "Profile sync timed out.",
+  );
+}
 
+function applySignedInRole(user, role) {
   state.userRole = role;
   els.authStatus.textContent = `${user.displayName || user.email} · ${role}`;
   els.loginBtn.classList.add("hidden");
@@ -211,8 +232,24 @@ async function handleAuthChange(user) {
   setAdminVisible(role === "admin");
 
   if (role === "admin") {
-    await Promise.allSettled([loadEvents(), loadRecentStudents()]);
+    loadAdminData();
   }
+}
+
+async function loadAdminData() {
+  await Promise.allSettled([
+    withTimeout(loadEvents(), 8000, "Events load timed out."),
+    withTimeout(loadRecentStudents(), 8000, "Student list load timed out."),
+  ]);
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]);
 }
 
 function shouldUseRedirectFallback(error) {
