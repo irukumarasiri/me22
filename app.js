@@ -366,19 +366,79 @@ async function loadEvents() {
   els.eventsList.innerHTML = state.events
     .map(
       (item) => `
-        <button class="list-row event-row" type="button" data-event-id="${escapeHtml(item.id)}">
+        <div class="list-row event-row">
           <span>
             <strong>${escapeHtml(item.title)}</strong>
             <small>${escapeHtml(formatDate(item.eventDate))} · ${escapeHtml(item.createdByEmail || "Unknown creator")}</small>
           </span>
-        </button>
+          <div class="row-actions">
+            <button class="btn small" type="button" data-event-id="${escapeHtml(item.id)}">Select</button>
+            <button class="btn danger small" type="button" data-delete-event="${escapeHtml(item.id)}">Delete</button>
+          </div>
+        </div>
       `,
     )
     .join("");
 
-  els.eventsList.querySelectorAll(".event-row").forEach((row) => {
-    row.addEventListener("click", () => selectEvent(row.dataset.eventId));
+  els.eventsList.querySelectorAll("[data-event-id]").forEach((button) => {
+    button.addEventListener("click", () => selectEvent(button.dataset.eventId));
   });
+
+  els.eventsList.querySelectorAll("[data-delete-event]").forEach((button) => {
+    button.addEventListener("click", () => deleteEventWithBackup(button.dataset.deleteEvent));
+  });
+}
+
+async function deleteEventWithBackup(eventId) {
+  if (!requireAdmin()) return;
+
+  try {
+    const eventSnap = await getDoc(doc(db, "events", eventId));
+    if (!eventSnap.exists()) {
+      showToast("Event was not found.", "error");
+      await loadEvents();
+      return;
+    }
+
+    const eventData = eventSnap.data();
+    const attendance = await collectEventAttendance(eventId);
+    const confirmed = window.confirm(
+      `Delete "${eventData.title || "this event"}"?\n\nA backup JSON file with ${attendance.length} attendance record${attendance.length === 1 ? "" : "s"} will be downloaded first. This delete cannot be undone inside Firebase.`,
+    );
+
+    if (!confirmed) return;
+
+    const backup = {
+      app: "Attendance Checker",
+      version: 1,
+      type: "deleted-event-backup",
+      exportedAt: new Date().toISOString(),
+      counts: { attendance: attendance.length },
+      data: {
+        event: { id: eventId, data: serializeData(eventData) },
+        attendance,
+      },
+    };
+
+    downloadJson(backup, `deleted-event-${safeFileName(eventData.title || eventId)}-${dateStamp()}.json`);
+    await Promise.all(attendance.map((row) => deleteDoc(doc(db, "events", eventId, "attendance", row.id))));
+    await deleteDoc(doc(db, "events", eventId));
+
+    if (state.activeEventId === eventId) {
+      state.activeEventId = null;
+      els.activeEventTitle.textContent = "Select an event";
+      els.activeEventMeta.textContent = "Attendance tools appear here.";
+      els.attendanceTools.classList.add("hidden");
+      els.attendanceList.innerHTML = "";
+      els.attendanceCount.textContent = "0";
+    }
+
+    showToast("Event deleted after backup download.");
+    await Promise.allSettled([loadEvents(), loadPublicRecentEvents()]);
+  } catch (error) {
+    console.warn("Event delete failed.", error);
+    showToast(`Event delete failed: ${error.message || "Try again."}`, "error");
+  }
 }
 
 async function selectEvent(eventId) {

@@ -300,6 +300,15 @@ small {
   flex-wrap: wrap;
 }
 
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
 .panel-head.compact {
   margin-top: 18px;
 }
@@ -555,6 +564,14 @@ small {
 
   .list-row {
     align-items: stretch;
+  }
+
+  .row-actions {
+    justify-content: stretch;
+  }
+
+  .row-actions .btn {
+    flex: 1 1 120px;
   }
 }
 
