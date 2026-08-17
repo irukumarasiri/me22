@@ -63,6 +63,9 @@ const els = {
   attendanceIndex: document.querySelector("#attendanceIndex"),
   markFeedback: document.querySelector("#markFeedback"),
   attendanceCount: document.querySelector("#attendanceCount"),
+  downloadEventAttendanceBtn: document.querySelector("#downloadEventAttendanceBtn"),
+  restoreEventAttendanceForm: document.querySelector("#restoreEventAttendanceForm"),
+  eventAttendanceBackupFile: document.querySelector("#eventAttendanceBackupFile"),
   attendanceList: document.querySelector("#attendanceList"),
   importForm: document.querySelector("#importForm"),
   importBatch: document.querySelector("#importBatch"),
@@ -73,6 +76,13 @@ const els = {
   customIndex: document.querySelector("#customIndex"),
   refreshStudentsBtn: document.querySelector("#refreshStudentsBtn"),
   studentsList: document.querySelector("#studentsList"),
+  downloadFullBackupBtn: document.querySelector("#downloadFullBackupBtn"),
+  restoreFullBackupForm: document.querySelector("#restoreFullBackupForm"),
+  fullBackupFile: document.querySelector("#fullBackupFile"),
+  downloadStudentsBackupBtn: document.querySelector("#downloadStudentsBackupBtn"),
+  restoreStudentsBackupForm: document.querySelector("#restoreStudentsBackupForm"),
+  studentsBackupFile: document.querySelector("#studentsBackupFile"),
+  backupResults: document.querySelector("#backupResults"),
   toast: document.querySelector("#toast"),
 };
 
@@ -121,9 +131,15 @@ function wireStaticHandlers() {
   els.refreshEventsBtn.addEventListener("click", loadEvents);
   els.batchChips.forEach((chip) => chip.addEventListener("click", () => setActiveBatch(chip.dataset.batch)));
   els.attendanceForm.addEventListener("submit", markAttendance);
+  els.downloadEventAttendanceBtn.addEventListener("click", downloadActiveEventAttendance);
+  els.restoreEventAttendanceForm.addEventListener("submit", restoreActiveEventAttendance);
   els.importForm.addEventListener("submit", importStudents);
   els.customStudentForm.addEventListener("submit", addCustomStudent);
   els.refreshStudentsBtn.addEventListener("click", loadRecentStudents);
+  els.downloadFullBackupBtn.addEventListener("click", downloadFullBackup);
+  els.restoreFullBackupForm.addEventListener("submit", restoreFullBackup);
+  els.downloadStudentsBackupBtn.addEventListener("click", downloadStudentsBackup);
+  els.restoreStudentsBackupForm.addEventListener("submit", restoreStudentsBackup);
 
   const today = new Date().toISOString().slice(0, 10);
   els.eventDate.value = today;
@@ -552,6 +568,361 @@ async function togglePublicAttendees(eventId, button) {
 
 function renderPublicEventsError(message) {
   els.publicEventsList.innerHTML = `<div class="notice warning">${escapeHtml(message)}</div>`;
+}
+
+async function downloadFullBackup() {
+  if (!requireAdmin()) return;
+
+  setBackupResult("Preparing full backup...");
+  try {
+    const [students, users, events] = await Promise.all([collectCollection("students"), collectCollection("users"), collectEventsWithAttendance()]);
+    const backup = {
+      app: "Attendance Checker",
+      version: 1,
+      type: "full",
+      exportedAt: new Date().toISOString(),
+      counts: {
+        students: students.length,
+        users: users.length,
+        events: events.length,
+        attendance: events.reduce((total, item) => total + item.attendance.length, 0),
+      },
+      data: { students, users, events },
+    };
+
+    downloadJson(backup, `attendance-checker-full-${dateStamp()}.json`);
+    setBackupResult(`Full backup downloaded: ${backup.counts.students} students, ${backup.counts.events} events, ${backup.counts.attendance} attendance records.`);
+  } catch (error) {
+    console.warn("Full backup failed.", error);
+    setBackupResult("Full backup failed. Make sure you are signed in as admin and Firestore rules are published.", "warning");
+  }
+}
+
+async function downloadStudentsBackup() {
+  if (!requireAdmin()) return;
+
+  setBackupResult("Preparing students backup...");
+  try {
+    const students = await collectCollection("students");
+    const backup = {
+      app: "Attendance Checker",
+      version: 1,
+      type: "students",
+      exportedAt: new Date().toISOString(),
+      counts: { students: students.length },
+      data: { students },
+    };
+
+    downloadJson(backup, `attendance-checker-students-${dateStamp()}.json`);
+    setBackupResult(`Students backup downloaded: ${students.length} records.`);
+  } catch (error) {
+    console.warn("Students backup failed.", error);
+    setBackupResult("Students backup failed. Make sure you are signed in as admin.", "warning");
+  }
+}
+
+async function downloadActiveEventAttendance() {
+  if (!requireAdmin() || !state.activeEventId) {
+    showToast("Select an event first.", "error");
+    return;
+  }
+
+  try {
+    const eventSnap = await getDoc(doc(db, "events", state.activeEventId));
+    const attendance = await collectEventAttendance(state.activeEventId);
+    const eventData = eventSnap.exists() ? eventSnap.data() : {};
+    const backup = {
+      app: "Attendance Checker",
+      version: 1,
+      type: "event-attendance",
+      exportedAt: new Date().toISOString(),
+      counts: { attendance: attendance.length },
+      data: {
+        event: { id: state.activeEventId, data: eventData },
+        attendance,
+      },
+    };
+
+    downloadJson(backup, `attendance-${safeFileName(eventData.title || state.activeEventId)}-${dateStamp()}.json`);
+    showToast(`Event attendance downloaded: ${attendance.length} records.`);
+  } catch (error) {
+    console.warn("Event attendance backup failed.", error);
+    showToast("Event attendance backup failed.", "error");
+  }
+}
+
+async function restoreFullBackup(event) {
+  event.preventDefault();
+  if (!requireAdmin()) return;
+
+  const file = els.fullBackupFile.files[0];
+  if (!file) {
+    setBackupResult("Choose a full backup JSON file first.", "warning");
+    return;
+  }
+
+  setBackupResult("Restoring full backup...");
+  try {
+    const backup = await readJsonFile(file);
+    const students = normalizeBackupRows(backup?.data?.students || backup?.students, "indexNumber");
+    const users = normalizeBackupRows(backup?.data?.users || backup?.users, "email");
+    const events = Array.isArray(backup?.data?.events) ? backup.data.events : [];
+    let attendanceCount = 0;
+
+    await upsertUsers(users);
+    await upsertStudents(students, false);
+    for (const item of events) {
+      const eventId = safeDocId(item.id) || crypto.randomUUID();
+      const eventData = sanitizeEventBackupData(item.data || item);
+      await setDoc(doc(db, "events", eventId), eventData, { merge: true });
+
+      const attendance = normalizeBackupRows(item.attendance || [], "indexNumber");
+      await upsertAttendance(eventId, attendance);
+      attendanceCount += attendance.length;
+    }
+
+    els.restoreFullBackupForm.reset();
+    await Promise.allSettled([loadEvents(), loadPublicRecentEvents(), loadRecentStudents()]);
+    setBackupResult(`Full backup restored: ${students.length} students, ${users.length} users, ${events.length} events, ${attendanceCount} attendance records.`);
+  } catch (error) {
+    console.warn("Full restore failed.", error);
+    setBackupResult(`Full restore failed: ${error.message || "Invalid backup file."}`, "warning");
+  }
+}
+
+async function restoreStudentsBackup(event) {
+  event.preventDefault();
+  if (!requireAdmin()) return;
+
+  const file = els.studentsBackupFile.files[0];
+  if (!file) {
+    setBackupResult("Choose a students backup JSON file first.", "warning");
+    return;
+  }
+
+  setBackupResult("Restoring students backup...");
+  try {
+    const backup = await readJsonFile(file);
+    const students = normalizeBackupRows(backup?.data?.students || backup?.students, "indexNumber");
+    await upsertStudents(students, true);
+
+    els.restoreStudentsBackupForm.reset();
+    await loadRecentStudents();
+    setBackupResult(`Students restored: ${students.length} records.`);
+  } catch (error) {
+    console.warn("Students restore failed.", error);
+    setBackupResult(`Students restore failed: ${error.message || "Invalid backup file."}`, "warning");
+  }
+}
+
+async function restoreActiveEventAttendance(event) {
+  event.preventDefault();
+  if (!requireAdmin() || !state.activeEventId) {
+    showToast("Select an event first.", "error");
+    return;
+  }
+
+  const file = els.eventAttendanceBackupFile.files[0];
+  if (!file) {
+    showToast("Choose an event attendance backup first.", "error");
+    return;
+  }
+
+  try {
+    const backup = await readJsonFile(file);
+    const attendance = normalizeBackupRows(backup?.data?.attendance || backup?.attendance, "indexNumber");
+    await upsertAttendance(state.activeEventId, attendance);
+
+    els.restoreEventAttendanceForm.reset();
+    await Promise.allSettled([loadAttendance(), loadPublicRecentEvents()]);
+    showToast(`Attendance restored to selected event: ${attendance.length} records.`);
+  } catch (error) {
+    console.warn("Event attendance restore failed.", error);
+    showToast(`Attendance restore failed: ${error.message || "Invalid backup file."}`, "error");
+  }
+}
+
+async function collectCollection(collectionName) {
+  const snap = await getDocs(collection(db, collectionName));
+  return snap.docs.map((item) => ({ id: item.id, data: serializeData(item.data()) }));
+}
+
+async function collectEventsWithAttendance() {
+  const events = await collectCollection("events");
+  return Promise.all(
+    events.map(async (item) => ({
+      ...item,
+      attendance: await collectEventAttendance(item.id),
+    })),
+  );
+}
+
+async function collectEventAttendance(eventId) {
+  const snap = await getDocs(collection(db, "events", eventId, "attendance"));
+  return snap.docs
+    .map((item) => ({ id: item.id, data: serializeData(item.data()) }))
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}
+
+async function upsertStudents(rows, requireRows) {
+  if (!rows.length && requireRows) throw new Error("No student records found in the backup.");
+  if (!rows.length) return;
+  await Promise.all(
+    rows.map((row) => {
+      const student = sanitizeStudentBackupData(row.data || row);
+      return setDoc(doc(db, "students", student.indexNumber), student, { merge: true });
+    }),
+  );
+}
+
+async function upsertUsers(rows) {
+  if (!rows.length) return;
+  await Promise.all(
+    rows.map((row) => {
+      const user = sanitizeUserBackupData(row.data || row);
+      const userId = safeDocId(row.id) || safeDocId(user.email);
+      if (!userId) throw new Error("A user record is missing a valid document ID.");
+      return setDoc(doc(db, "users", userId), user, { merge: true });
+    }),
+  );
+}
+
+async function upsertAttendance(eventId, rows) {
+  if (!rows.length) return;
+  await Promise.all(
+    rows.map((row) => {
+      const attendance = sanitizeAttendanceBackupData(row.data || row);
+      return setDoc(doc(db, "events", eventId, "attendance", attendance.indexNumber), attendance, { merge: true });
+    }),
+  );
+}
+
+function normalizeBackupRows(rows, idField) {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => {
+      const data = row?.data || row;
+      const id = row?.id || data?.[idField];
+      return id ? { id, data } : null;
+    })
+    .filter(Boolean);
+}
+
+function sanitizeStudentBackupData(data) {
+  const indexNumber = normalizeIndex(data.indexNumber);
+  const name = String(data.name || "").trim().replace(/\s+/g, " ").slice(0, 160);
+  if (!indexNumber || !name) throw new Error("A student record is missing indexNumber or name.");
+
+  return {
+    indexNumber,
+    name,
+    batch: validBatch(data.batch),
+    category: data.category === "custom" ? "custom" : "batch",
+    updatedAt: data.updatedAt || serverTimestamp(),
+    importedByUid: data.importedByUid || state.user.uid,
+    importedByEmail: data.importedByEmail || state.user.email,
+  };
+}
+
+function sanitizeUserBackupData(data) {
+  const email = String(data.email || "").trim().toLowerCase().slice(0, 200);
+  if (!email) throw new Error("A user record is missing an email address.");
+
+  return {
+    email,
+    displayName: String(data.displayName || "").trim().slice(0, 120),
+    photoURL: String(data.photoURL || "").trim().slice(0, 500),
+    role: data.role === "admin" ? "admin" : "user",
+    createdAt: data.createdAt || serverTimestamp(),
+    updatedAt: data.updatedAt || serverTimestamp(),
+  };
+}
+
+function sanitizeEventBackupData(data) {
+  const title = String(data.title || "Restored event").trim().slice(0, 120) || "Restored event";
+  const eventDate = /^\d{4}-\d{2}-\d{2}$/.test(String(data.eventDate || "")) ? data.eventDate : new Date().toISOString().slice(0, 10);
+
+  return {
+    title,
+    description: String(data.description || "").slice(0, 500),
+    eventDate,
+    createdAt: data.createdAt || serverTimestamp(),
+    createdByUid: data.createdByUid || state.user.uid,
+    createdByEmail: data.createdByEmail || state.user.email,
+  };
+}
+
+function sanitizeAttendanceBackupData(data) {
+  const indexNumber = normalizeIndex(data.indexNumber);
+  const studentName = String(data.studentName || data.name || "").trim().replace(/\s+/g, " ").slice(0, 160);
+  if (!indexNumber || !studentName) throw new Error("An attendance record is missing indexNumber or studentName.");
+
+  return {
+    indexNumber,
+    studentName,
+    batch: validBatch(data.batch),
+    category: data.category === "custom" ? "custom" : "batch",
+    markedAt: data.markedAt || serverTimestamp(),
+    markedByUid: data.markedByUid || state.user.uid,
+    markedByEmail: data.markedByEmail || state.user.email,
+  };
+}
+
+function validBatch(value) {
+  const batch = String(value || "").slice(0, 5);
+  return [...REQUIRED_BATCHES, "other"].includes(batch) ? batch : "other";
+}
+
+function serializeData(data) {
+  return JSON.parse(JSON.stringify(data));
+}
+
+function readJsonFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        resolve(JSON.parse(reader.result));
+      } catch (error) {
+        reject(new Error("The selected file is not valid JSON."));
+      }
+    };
+    reader.onerror = () => reject(new Error("Could not read the selected file."));
+    reader.readAsText(file);
+  });
+}
+
+function downloadJson(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function dateStamp() {
+  return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+}
+
+function safeFileName(value) {
+  return String(value || "backup")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "backup";
+}
+
+function safeDocId(value) {
+  const id = String(value || "").trim();
+  return id && id.length <= 120 && !id.includes("/") ? id : "";
+}
+
+function setBackupResult(message, type = "success") {
+  els.backupResults.innerHTML = `<div class="notice ${type}">${escapeHtml(message)}</div>`;
 }
 
 async function importStudents(event) {

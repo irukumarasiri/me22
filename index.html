@@ -40,6 +40,7 @@
           <button class="tab admin-only hidden" type="button" data-view="eventsView">Events</button>
           <button class="tab admin-only hidden" type="button" data-view="importView">Import</button>
           <button class="tab admin-only hidden" type="button" data-view="studentsView">Students</button>
+          <button class="tab admin-only hidden" type="button" data-view="backupView">Backups</button>
         </nav>
 
         <section id="searchView" class="view active">
@@ -159,9 +160,22 @@
                 <div id="markFeedback" class="inline-feedback" aria-live="polite"></div>
 
                 <div class="panel-head compact">
-                  <h3>Present students</h3>
-                  <span id="attendanceCount" class="count-pill">0</span>
+                  <div>
+                    <h3>Present students</h3>
+                    <p class="muted">Download or restore attendance for this event only.</p>
+                  </div>
+                  <div class="action-row">
+                    <span id="attendanceCount" class="count-pill">0</span>
+                    <button id="downloadEventAttendanceBtn" class="btn small" type="button">Download event</button>
+                  </div>
                 </div>
+                <form id="restoreEventAttendanceForm" class="restore-strip">
+                  <label>
+                    Restore attendance file
+                    <input id="eventAttendanceBackupFile" type="file" accept=".json,application/json" />
+                  </label>
+                  <button class="btn small" type="submit">Upload to event</button>
+                </form>
                 <div id="attendanceList" class="item-list attendance-list"></div>
               </div>
             </section>
@@ -230,6 +244,53 @@
             </div>
             <div id="studentsList" class="item-list"></div>
           </section>
+        </section>
+
+        <section id="backupView" class="view">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Admin safeguards</p>
+              <h2>Backup and restore data</h2>
+            </div>
+          </div>
+
+          <div class="work-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Full backup</h3>
+                  <p class="muted">Exports students, events, attendance, and user profiles.</p>
+                </div>
+              </div>
+              <button id="downloadFullBackupBtn" class="btn primary" type="button">Download full backup</button>
+              <form id="restoreFullBackupForm" class="backup-form">
+                <label>
+                  Restore full backup
+                  <input id="fullBackupFile" type="file" accept=".json,application/json" />
+                </label>
+                <button class="btn" type="submit">Upload full backup</button>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Students only</h3>
+                  <p class="muted">Exports or restores the student and custom helper records.</p>
+                </div>
+              </div>
+              <button id="downloadStudentsBackupBtn" class="btn primary" type="button">Download students</button>
+              <form id="restoreStudentsBackupForm" class="backup-form">
+                <label>
+                  Restore students backup
+                  <input id="studentsBackupFile" type="file" accept=".json,application/json" />
+                </label>
+                <button class="btn" type="submit">Upload students</button>
+              </form>
+            </section>
+          </div>
+
+          <div id="backupResults" class="results-stack" aria-live="polite"></div>
         </section>
       </main>
     </div>

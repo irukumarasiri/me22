@@ -43,9 +43,8 @@ service cloud.firestore {
         && indexNumber.matches('^[A-Z0-9]{1,32}$');
     }
 
-    function validUserProfile(uid) {
-      return ownProfile(uid)
-        && request.resource.data.keys().hasOnly([
+    function validUserProfileData() {
+      return request.resource.data.keys().hasOnly([
           "email",
           "displayName",
           "photoURL",
@@ -53,10 +52,16 @@ service cloud.firestore {
           "createdAt",
           "updatedAt"
         ])
-        && request.resource.data.email == request.auth.token.email
+        && validShortText(request.resource.data.email, 200)
         && validOptionalText(request.resource.data.displayName, 120)
         && validOptionalText(request.resource.data.photoURL, 500)
         && request.resource.data.role in ["admin", "user"];
+    }
+
+    function validOwnUserProfile(uid) {
+      return ownProfile(uid)
+        && validUserProfileData()
+        && request.resource.data.email == request.auth.token.email;
     }
 
     function validStudent(indexNumber) {
@@ -91,8 +96,8 @@ service cloud.firestore {
         && validOptionalText(request.resource.data.description, 500)
         && request.resource.data.eventDate is string
         && request.resource.data.eventDate.matches('^\\d{4}-\\d{2}-\\d{2}$')
-        && request.resource.data.createdByUid == request.auth.uid
-        && request.resource.data.createdByEmail == request.auth.token.email;
+        && validShortText(request.resource.data.createdByUid, 128)
+        && validShortText(request.resource.data.createdByEmail, 200);
     }
 
     function validAttendance(indexNumber) {
@@ -110,21 +115,24 @@ service cloud.firestore {
         && validShortText(request.resource.data.studentName, 160)
         && request.resource.data.batch in ["22", "23", "24", "25", "other"]
         && request.resource.data.category in ["batch", "custom"]
-        && request.resource.data.markedByUid == request.auth.uid
-        && request.resource.data.markedByEmail == request.auth.token.email;
+        && validShortText(request.resource.data.markedByUid, 128)
+        && validShortText(request.resource.data.markedByEmail, 200);
     }
 
     match /users/{uid} {
       allow read: if ownProfile(uid) || isAdmin();
-      allow create: if validUserProfile(uid)
-        && (
-          request.resource.data.role == "user"
-          || (request.resource.data.role == "admin" && isBootstrapAdmin())
+      allow create: if (isAdmin() && validUserProfileData())
+        || (
+          validOwnUserProfile(uid)
+          && (
+            request.resource.data.role == "user"
+            || (request.resource.data.role == "admin" && isBootstrapAdmin())
+          )
         );
-      allow update: if validUserProfile(uid)
-        && (
-          isAdmin()
-          || request.resource.data.role == resource.data.role
+      allow update: if (isAdmin() && validUserProfileData())
+        || (
+          validOwnUserProfile(uid)
+          && request.resource.data.role == resource.data.role
         );
       allow delete: if false;
     }

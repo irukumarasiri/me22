@@ -241,6 +241,23 @@ label {
   font-weight: 750;
 }
 
+.backup-form,
+.restore-strip {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.restore-strip {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
 input,
 select,
 textarea {
@@ -273,6 +290,14 @@ small {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .panel-head.compact {
@@ -518,6 +543,7 @@ small {
   .form-grid.two,
   .work-grid,
   .mark-form,
+  .restore-strip,
   .public-events-grid,
   .compact-attendee-list {
     grid-template-columns: 1fr;

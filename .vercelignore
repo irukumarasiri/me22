@@ -1,0 +1,6 @@
+Student List/
+*.xlsx
+*.xls
+.git/
+README.md
+firestore.rules
